@@ -1,6 +1,4 @@
 #########################################################
-
-
 # Copyright (c) 2018 Open Steno Project
 # See LICENSE.txt for details.
 #
@@ -24,12 +22,10 @@
 # https://github.com/brianb/mdbtools/blob/master/HACKING
 
 import struct
-import zlib
-import xml.etree.ElementTree as ET
-from plover.steno import normalize_steno
+
 from plover.steno_dictionary import StenoDictionary
-from plover import resource
-from collections import defaultdict
+from plover.steno import normalize_steno
+
 
 ##############################################
 #
@@ -72,11 +68,10 @@ USEFUL_COLUMNS = ('Steno', 'English', 'Flags')
 
 ##############################################
 
-class JetReader(object):
+class JetReader:
     """An iterator over the steno table inside a Jet4 database.
     """
     def __init__(self, fp):
-
         self._fp = fp
         self._control = self._find_control_page()
 
@@ -185,7 +180,7 @@ class JetReader(object):
                         if start_of_record & 0x8000:
                             #  0x8000 = deleted row
                             continue
-                        elif start_of_record & 0x4000:
+                        if start_of_record & 0x4000:
                             #  0x4000 = 4-byte reference to another data page,
                             #         which we're going to find and
                             #         read anyway
@@ -286,8 +281,8 @@ def _decode_steno(encoded,
         #
         # So the bitmasks are:
         #   ?#ST KPWH RAO* EUFR PBLG TSDZ
-        #          111 11          - vowels and *
-        #            11 1111 1111  - right-hand keys
+        #              111 11              - vowels and *
+        #                    11 1111 1111  - right-hand keys
         vowel_bitmask      = 0x007C00,
         right_hand_bitmask = 0x0003FF,
     ):
@@ -306,34 +301,38 @@ def _decode_steno(encoded,
                 (such as ("SPAOPB", "-FL")).
     """
 
-    result = []
+    steno = ''
 
     while encoded:
-        result.append('')
+        if steno:
+            steno += '/'
+
         stroke = int(encoded[:6], 16)
 
-        needs_hyphen = (stroke & right_hand_bitmask) \
-            and not (stroke & vowel_bitmask)
+        needs_hyphen = stroke & right_hand_bitmask \
+            and not stroke & vowel_bitmask
 
-        for i in keys:
-            if i=='-':
+        for k in keys:
+            if k == '-':
                 if needs_hyphen:
-                    result[-1] += '-'
+                    steno += '-'
             else:
                 if stroke & 0x800000:
-                    result[-1] += i
+                    steno += k
                 stroke <<= 1
 
         encoded = encoded[6:]
 
-    return tuple(result)
+    return normalize_steno(steno)
 
 ##############################################
 
-class JetToStenoAdapter(object):
+class JetToStenoAdapter:
+
     """An iterator that maps the steno table in a Jet4 database
     to dictionary entries Plover can use.
     """
+
     def __init__(self, source):
         self._source = source
 
@@ -363,58 +362,16 @@ class JetToStenoAdapter(object):
 
             yield (steno, translation)
 
-##############################################
-
-class JetDictionary(StenoDictionary):
-    """A StenoDictionary loaded from a Jet (.mdb, .dct) file."""
-
-    def _load(self, filename):
-
-        self.update(adapter)
-
 #########################################################
-# CF
 
 class DigitalCATDictionary(StenoDictionary):
+
     """A StenoDictionary loaded from a DigitalCAT (.dct) file."""
 
     readonly = True
 
-    def __init__(self):
-        super(DigitalCATDictionary, self).__init__()
-
-        self._contents = None
-        self._reverse_contents = None
-        self.readonly = True
-
     def _load(self, filename):
-
         with open(filename, 'rb') as fp:
             reader = JetReader(fp)
             adapter = JetToStenoAdapter(reader)
-
-            self._contents = {}
-            self._reverse_contents = defaultdict(list)
-
-            for (k, v) in adapter:
-                self._contents[k] = v
-                self._reverse_contents[v].append(k)
-
-    def getattr(self, key, default=None):
-        return self.__getattr__(key, default)
-
-    def __setitem__(self, key, value):
-        raise NotImplementedError()
-
-    def __delitem__(self, key):
-        raise NotImplementedError()
-
-    def __getitem__(self, key):
-        return self._contents.__getitem__(key)
-
-    def get(self, key, fallback=None):
-        return self._contents.get(key, fallback)
-
-    def reverse_lookup(self, value):
-        return self._reverse_contents[value]
-
+            self.update(adapter)
